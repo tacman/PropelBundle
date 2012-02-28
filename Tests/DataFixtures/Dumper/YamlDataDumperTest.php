@@ -46,7 +46,7 @@ XML;
         $builder = new \PropelQuickBuilder();
         $builder->setSchema($schema);
         if (!class_exists('Propel\PropelBundle\Tests\Fixtures\DataFixtures\Loader\Book')) {
-            $builder->setClassTargets(array('tablemap', 'peer', 'object', 'query', 'peerstub', 'objectstub', 'querystub'));
+            $builder->setClassTargets(array('peer', 'object', 'query', 'peerstub', 'objectstub', 'querystub'));
         } else {
             $builder->setClassTargets(array());
         }
