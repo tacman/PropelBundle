@@ -96,7 +96,7 @@ abstract class AbstractPropelCommand extends ContainerAwareCommand
         if (isset($properties['propel.schema.dir'])) {
             $this->cacheDir = $properties['propel.schema.dir'];
         } else {
-            $this->cacheDir = $kernel->getRootDir().'/cache/' . $kernel->getEnvironment() . '/propel';
+            $this->cacheDir = $kernel->getCacheDir().'/propel';
 
             $filesystem = new Filesystem();
             $filesystem->remove($this->cacheDir);
@@ -108,7 +108,7 @@ abstract class AbstractPropelCommand extends ContainerAwareCommand
         // build.properties
         $this->createBuildPropertiesFile($kernel, $this->cacheDir.'/build.properties');
 
-        // buidtime-conf.xml
+        // buildtime-conf.xml
         $this->createBuildTimeFile($this->cacheDir.'/buildtime-conf.xml');
 
         // Verbosity
@@ -177,26 +177,7 @@ abstract class AbstractPropelCommand extends ContainerAwareCommand
 
         $base = ltrim(realpath($kernel->getRootDir().'/..'), DIRECTORY_SEPARATOR);
 
-        $finalSchemas = array();
-
-        foreach ($kernel->getBundles() as $bundle) {
-            if (is_dir($dir = $bundle->getPath().'/Resources/config')) {
-                $finder  = new Finder();
-                $schemas = $finder->files()->name('*schema.xml')->followLinks()->in($dir);
-
-                if (!iterator_count($schemas)) {
-                    continue;
-                }
-                foreach ($schemas as $schema) {
-
-                    $logicalName = $this->transformToLogicalName($schema, $bundle);
-                    $finalSchema = new \SplFileInfo($this->getFileLocator()->locate($logicalName));
-
-                    $finalSchemas[(string)$finalSchema] = array($bundle, $finalSchema);
-                }
-            }
-        }
-
+        $finalSchemas = $this->getFinalSchemas($kernel);
         foreach ($finalSchemas as $schema) {
             list($bundle, $finalSchema) = $schema;
             $packagePrefix = self::getPackagePrefix($bundle, $base);
@@ -241,6 +222,52 @@ abstract class AbstractPropelCommand extends ContainerAwareCommand
 
             file_put_contents($file, $database->asXML());
         }
+    }
+
+    /**
+     * Return a list of final schema files that will be processed.
+     *
+     * @param \Symfony\Component\HttpKernel\KernelInterface $kernel
+     *
+     * @return array
+     */
+    protected function getFinalSchemas(KernelInterface $kernel)
+    {
+        $finalSchemas = array();
+        foreach ($kernel->getBundles() as $bundle) {
+            $finalSchemas = array_merge($finalSchemas, $this->getSchemasFromBundle($bundle));
+        }
+
+        return $finalSchemas;
+    }
+
+    /**
+     * @param \Symfony\Component\HttpKernel\Bundle\BundleInterface
+     */
+    protected function getSchemasFromBundle(BundleInterface $bundle)
+    {
+        $finalSchemas = array();
+
+        if (is_dir($dir = $bundle->getPath().'/Resources/config')) {
+            $finder  = new Finder();
+            $schemas = $finder->files()->name('*schema.xml')->followLinks()->in($dir);
+
+            if (iterator_count($schemas)) {
+                foreach ($schemas as $schema) {
+                    $logicalName = $this->transformToLogicalName($schema, $bundle);
+                    $finalSchema = new \SplFileInfo($this->getFileLocator()->locate($logicalName));
+
+                    $finalSchemas[(string)$finalSchema] = array($bundle, $finalSchema);
+                }
+            }
+        }
+
+        return $finalSchemas;
+    }
+
+    protected function getRelativeFileName(\SplFileInfo $file)
+    {
+        return substr(str_replace(realpath($this->getContainer()->getParameter('kernel.root_dir') . '/../'), '', $file), 1);
     }
 
     /**
@@ -335,8 +362,17 @@ EOT;
                 continue;
             }
 
-            $pos = strpos($line, '=');
-            $properties[trim(substr($line, 0, $pos))] = trim(substr($line, $pos + 1));
+            $pos      = strpos($line, '=');
+            $property = trim(substr($line, 0, $pos));
+            $value    = trim(substr($line, $pos + 1));
+
+            if ("true" === $value) {
+                $value = true;
+            } else if ("false" === $value) {
+                $value = false;
+            }
+
+            $properties[$property] = $value;
         }
 
         return $properties;
@@ -412,7 +448,7 @@ EOT;
      * Write Propel output as summary based on a Regexp.
      *
      * @param OutputInterface $output   The output object.
-     * @param string $taskname  A task name
+     * @param string $taskname          A task name
      */
     protected function writeSummary(OutputInterface $output, $taskname)
     {
@@ -435,8 +471,8 @@ EOT;
      * @see https://github.com/sensio/SensioGeneratorBundle/blob/master/Command/Helper/DialogHelper.php#L52
      *
      * @param OutputInterface $output   The output.
-     * @param string $text  A text message.
-     * @param string $style A style to apply on the section.
+     * @param string $text              A text message.
+     * @param string $style             A style to apply on the section.
      */
     protected function writeSection(OutputInterface $output, $text, $style = 'bg=blue;fg=white')
     {
@@ -451,8 +487,8 @@ EOT;
      * Renders an error message if a task has failed.
      *
      * @param OutputInterface $output   The output.
-     * @param string $taskName  A task name.
-     * @param Boolean $more		Whether to add a 'more details' message or not.
+     * @param string $taskName          A task name.
+     * @param Boolean $more		        Whether to add a 'more details' message or not.
      */
     protected function writeTaskError($output, $taskName, $more = true)
     {
@@ -467,7 +503,7 @@ EOT;
 
     /**
      * @param OutputInterface $output   The output.
-     * @param string $filename	The filename.
+     * @param string $filename	        The filename.
      */
     protected function writeNewFile($output, $filename)
     {
@@ -475,15 +511,32 @@ EOT;
     }
 
     /**
+     * @param OutputInterface $output   The output.
+     * @param string $directory	        The directory.
+     */
+    protected function writeNewDirectory($output, $directory)
+    {
+        return $output->writeln('>>  <info>Dir+</info>     ' . $directory);
+    }
+
+    /**
      * Ask confirmation from the user.
      *
      * @param OutputInterface $output   The output.
-     * @param string $question  A given question.
-     * @param string $default   A default response.
+     * @param string $question          A given question.
+     * @param string $default           A default response.
      */
     protected function askConfirmation(OutputInterface $output, $question, $default = null)
     {
         return $this->getHelperSet()->get('dialog')->askConfirmation($output, $question, $default);
+    }
+
+    /**
+     * @return \Symfony\Component\Config\FileLocatorInterface
+     */
+    protected function getFileLocator()
+    {
+        return $this->getContainer()->get('file_locator');
     }
 
     private function transformToLogicalName(\SplFileInfo $schema, BundleInterface $bundle)
@@ -491,11 +544,6 @@ EOT;
         $schemaPath = str_replace($bundle->getPath(). DIRECTORY_SEPARATOR . 'Resources' . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR, '', $schema->getRealPath());
 
         return sprintf('@%s/Resources/config/%s', $bundle->getName(), $schemaPath);
-    }
-
-    private function getFileLocator()
-    {
-        return $this->getContainer()->get('file_locator');
     }
 
     /**

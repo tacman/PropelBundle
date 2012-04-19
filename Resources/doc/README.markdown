@@ -2,22 +2,6 @@
 
 This is the official implementation of [Propel](http://www.propelorm.org/) in Symfony2.
 
-Currently supports:
-
- * Generation of model classes based on an XML schema (not YAML) placed under `BundleName/Resources/config/*schema.xml`.
- * Insertion of SQL statements.
- * Runtime autoloading of Propel and generated classes.
- * Propel runtime initialization through the XML configuration.
- * Migrations [Propel 1.6](http://www.propelorm.org/documentation/10-migrations.html).
- * Reverse engineering from [existing database](http://www.propelorm.org/cookbook/working-with-existing-databases.html).
- * Integration to the Symfony2 Profiler.
- * Load SQL, YAML and XML fixtures.
- * Create/Drop databases.
- * Integration with the Form component.
- * Integration with the Security component.
- * Propel ParamConverter can be used with Sensio Framework Extra Bundle.
- * Schema Inheritance
-
 ## Installation ##
 
  * Clone this bundle in the `vendor/bundles/Propel` directory:
@@ -35,13 +19,13 @@ Currently supports:
     > git submodule add https://github.com/Xosofox/phing.git vendor/phing
 
     > git submodule add https://github.com/propelorm/Propel.git vendor/propel
-    
+
  * Instead of doing this manually, you can use the Symfony vendor management via the deps file:
- 
+
    See http://www.propelorm.org/cookbook/symfony2/working-with-symfony2.html#via_symfony2_vendor_management
 
-   If you are using a Symfony2 2.x.x version (actually, a version which is not 2.1 or above), be sure to deps.lock the PropelBundle to a commit on the 2.0 branch, 
-   which does not use the Bridge  
+   If you are using a Symfony2 2.x.x version (actually, a version which is not 2.1 or above), be sure to deps.lock the PropelBundle to a commit on the 2.0 branch,
+   which does not use the Bridge
 
  * Register this bundle in the `AppKernel` class:
 
@@ -97,11 +81,17 @@ propel:
         attributes:           {}
 #        default_connection:       default
 #        connections:
-#           default:
-#               driver:             mysql
-#               user:               root
-#               password:           null
-#               dsn:                mysql:host=localhost;dbname=test
+#            default:
+#                driver:             mysql
+#                user:               root
+#                password:           null
+#                dsn:                mysql:host=localhost;dbname=test
+#                slaves:
+#                    slave_server_1:
+#                        user:       root
+#                        password:   null
+#                        dsn:        mysql:host=localhost;dbname=test_slave_1
+#
 #               options:
 #                   ATTR_PERSISTENT: false
 #               attributes:
@@ -175,9 +165,9 @@ Call the application console with the `propel:build` command:
 
 ### Insert SQL ###
 
-Call the application console with the `propel:insert-sql` command:
+Call the application console with the `propel:sql:insert` command:
 
-    > php app/console propel:insert-sql [--force]
+    > php app/console propel:sql:insert [--force]
 
 Note that the `--force` option is needed to actually execute the SQL statements.
 
@@ -237,7 +227,7 @@ You can define which connection to use:
 
 You can load your own fixtures by using the following command:
 
-    > php app/console propel:fixtures:load [-d|--dir[="..."]] [--xml] [--sql] [--yml] [--connection[="..."]]
+    > php app/console propel:fixtures:load [-d|--dir[="..."]] [--xml] [--sql] [--yml] [--connection[="..."]] [bundle]
 
 As usual, `--connection` allows to specify a connection.
 
@@ -277,6 +267,11 @@ A valid _YAML fixtures file_ is:
          ObjectId: o1
          Description: Hello world !
 ```
+
+You can load all fixtures files from a given _bundle_:
+
+    > php app/console propel:fixtures:load @MySuperBundle
+
 
 You can dump data into YAML fixtures file by using this command:
 
@@ -324,6 +319,19 @@ As usual, `--connection` allows to specify a connection.
 The table arguments define which table will be delete, by default all table.
 
 Note that the `--force` option is needed to actually execute the deletion.
+
+
+### Form Types ###
+
+You can generate stub classes based on your `schema.xml` in a given bundle:
+
+    > php app/console propel:form:generate [-f|--force] bundle [models1] ... [modelsN]
+
+It will write Form Type classes in `src/YourVendor/YourBundle/Form/Type`.
+
+You can choose which Form Type to build by specifing Model names:
+
+    > php app/console propel:form:generate @MySuperBundle Book Author
 
 
 ## PropelParamConverter ##
@@ -401,7 +409,43 @@ Currently only schema inheritance is provided.
 ### Schema Inheritance ###
 
 You can override the defined schema of a bundle from within its child bundle.
-The child's schema will *completely* override the parent's one.
 To make use of the inheritance you only need to drop a schema file in the `Resources/config` folder of the child bundle.
 
-**IMPORTANT**: If there is *at least one* schema file in the child bundle, *none* of the parent's schema files will be used.
+Each file can be overridden without interfering with other schema files.
+If you want to remove parts of a schema, you only need to add an empty schema file.
+
+## ACL implementation ##
+
+The `PropelBundle` provides a model-based implementation of the Security components' interfaces.
+To make us of this `AuditableAclProvider` you only need to change your security configuration.
+
+``` yaml
+security:
+    acl:
+        provider: propel.security.acl.provider
+```
+
+This will switch the provider to be the `AuditableAclProvider` of the `PropelBundle`.
+
+The auditing of this provider is set to a sensible default. It will audit all ACL failures but no success by default.
+If you also want to audit successful authorizations, you need to update the auditing of the given ACL accordingly.
+
+After adding the provider, you only need to run the `propel:init:acl` command in order to get the model generated.
+If you already got an ACL database, the schema of the `PropelBundle` is compatible with the default schema of Symfony2.
+
+### Separate database connection for ACL ###
+
+In case you want to use a different database for your ACL than your business model, you only need to configure this service.
+
+``` yaml
+services:
+    propel.security.acl.connection:
+        class: PropelPDO
+        factory_class: Propel
+        factory_method: getConnection
+        arguments:
+            - "acl"
+```
+
+The `PropelBundle` looks for this service, and if given uses the provided connection for all ACL related operations.
+The given argument (`acl` in the example) is the name of the connection to use, as defined in your runtime configuration.

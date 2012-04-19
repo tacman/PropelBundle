@@ -31,24 +31,12 @@ abstract class AbstractDataLoader extends AbstractDataHandler implements DataLoa
     /**
      * @var array
      */
-    private $deletedClasses;
+    protected $deletedClasses = array();
+
     /**
      * @var array
      */
-    private $object_references;
-
-    /**
-     * Default constructor
-     *
-     * @param string $rootDir   The root directory.
-     */
-    public function __construct($rootDir)
-    {
-        parent::__construct($rootDir);
-
-        $this->deletedClasses = array();
-        $this->object_references = array();
-    }
+    protected $object_references = array();
 
     /**
      * Transforms a file containing data in an array.
@@ -64,6 +52,7 @@ abstract class AbstractDataLoader extends AbstractDataHandler implements DataLoa
     public function load($files = array(), $connectionName)
     {
         $nbFiles = 0;
+        $this->deletedClasses = array();
 
         $this->loadMapBuilders($connectionName);
         $this->con = Propel::getConnection($connectionName);
@@ -161,10 +150,19 @@ abstract class AbstractDataLoader extends AbstractDataHandler implements DataLoa
                 }
 
                 foreach ($data as $name => $value) {
-                    if (is_array($value) && 's' == substr($name, -1)) {
-                        // many to many relationship
-                        $this->loadManyToMany($obj, substr($name, 0, -1), $value);
-                        continue;
+                    try {
+                        if (is_array($value) && 's' === substr($name, -1)) {
+                            // many to many relationship
+                            $this->loadManyToMany($obj, substr($name, 0, -1), $value);
+                            continue;
+                        }
+                    } catch (\PropelException $e) {
+                        // Check whether this is actually an array stored in the object.
+                        if ('Cannot fetch TableMap for undefined table: '.substr($name, 0, -1) === $e->getMessage()) {
+                            if ('ARRAY' !== $tableMap->getColumn($name)->getType()) {
+                                throw $e;
+                            }
+                        }
                     }
 
                     $isARealColumn = true;
@@ -178,15 +176,24 @@ abstract class AbstractDataLoader extends AbstractDataHandler implements DataLoa
 
                     // foreign key?
                     if ($isARealColumn) {
+                        // self referencing entry
+                        if ($column->isPrimaryKey() && null !== $value) {
+                            if (isset($this->object_references[$class.'_'.$value])) {
+                                $obj = $this->object_references[$class.'_'.$value];
+
+                                continue;
+                            }
+                        }
+
                         if ($column->isForeignKey() && null !== $value) {
                             $relatedTable = $this->dbMap->getTable($column->getRelatedTableName());
-                            if (!isset($this->object_references[$relatedTable->getPhpName().'_'.$value])) {
+                            if (!isset($this->object_references[$relatedTable->getClassname().'_'.$value])) {
                                 throw new \InvalidArgumentException(
-                                    sprintf('The object "%s" from class "%s" is not defined in your data file.', $value, $relatedTable->getPhpName())
+                                    sprintf('The object "%s" from class "%s" is not defined in your data file.', $value, $relatedTable->getClassname())
                                 );
                             }
                             $value = $this
-                                ->object_references[$relatedTable->getPhpName().'_'.$value]
+                                ->object_references[$relatedTable->getClassname().'_'.$value]
                                 ->getByName($column->getRelatedName(), BasePeer::TYPE_COLNAME);
                         }
                     }
@@ -205,8 +212,7 @@ abstract class AbstractDataLoader extends AbstractDataHandler implements DataLoa
 
                 // save the object for future reference
                 if (method_exists($obj, 'getPrimaryKey')) {
-                    $class_default = constant(constant($class.'::PEER').'::CLASS_DEFAULT');
-                    $this->object_references[Propel::importClass($class_default).'_'.$key] = $obj;
+                    $this->object_references[$class.'_'.$key] = $obj;
                 }
             }
         }

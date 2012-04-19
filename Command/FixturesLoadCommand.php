@@ -16,6 +16,7 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\Finder\Finder;
+use Symfony\Component\HttpKernel\Bundle\BundleInterface;
 
 use Propel\PropelBundle\Command\AbstractPropelCommand;
 use Propel\PropelBundle\DataFixtures\Loader\YamlDataLoader;
@@ -33,16 +34,24 @@ class FixturesLoadCommand extends AbstractPropelCommand
      * @var string
      */
     private $defaultFixturesDir = 'app/propel/fixtures';
+
     /**
      * Absolute path for fixtures directory
      * @var string
      */
     private $absoluteFixturesPath = '';
+
     /**
      * Filesystem for manipulating files
      * @var \Symfony\Component\Filesystem\Filesystem
      */
     private $filesystem = null;
+
+    /**
+     * Bundle the fixtures are being loaded from
+     * @var Symfony\Component\HttpKernel\Bundle\BundleInterface
+     */
+    private $bundle;
 
     /**
      * @see Command
@@ -51,6 +60,7 @@ class FixturesLoadCommand extends AbstractPropelCommand
     {
         $this
             ->setDescription('Load XML, SQL and/or YAML fixtures')
+            ->addArgument('bundle', InputArgument::OPTIONAL, 'The bundle to load fixtures from')
             ->addOption(
                 'dir', 'd', InputOption::VALUE_OPTIONAL,
                 'The directory where XML, SQL and/or YAML fixtures files are located',
@@ -102,9 +112,9 @@ YAML fixtures are:
             Description: Hello world !
 </comment>
 EOT
-            )
+        )
             ->setName('propel:fixtures:load')
-        ;
+            ;
     }
 
     /**
@@ -117,10 +127,20 @@ EOT
         $this->writeSection($output, '[Propel] You are running the command: propel:fixtures:load');
 
         $this->filesystem = new Filesystem();
-        $this->absoluteFixturesPath = realpath($this->getApplication()->getKernel()->getRootDir() . '/../' . $input->getOption('dir'));
+
+        if ('@' === substr($input->getArgument('bundle'), 0, 1)) {
+            $this->bundle = $this
+                ->getContainer()
+                ->get('kernel')
+                ->getBundle(substr($input->getArgument('bundle'), 1));
+
+            $this->absoluteFixturesPath = $this->getFixturesPath($this->bundle);
+        } else {
+            $this->absoluteFixturesPath = realpath($this->getApplication()->getKernel()->getRootDir() . '/../' . $input->getOption('dir'));
+        }
 
         if ($input->getOption('verbose')) {
-           $this->additionalPhingArgs[] = 'verbose';
+            $this->additionalPhingArgs[] = 'verbose';
         }
 
         if (!$this->absoluteFixturesPath && !file_exists($this->absoluteFixturesPath)) {
@@ -167,9 +187,7 @@ EOT
             return;
         }
 
-        $finder = new Finder();
-        $tmpdir = $this->getApplication()->getKernel()->getRootDir() . '/cache/propel';
-        $datas  = $finder->name('*.' . $type)->in($this->absoluteFixturesPath);
+        $datas = $this->getFixtureFiles($type);
 
         if (count(iterator_to_array($datas)) === 0) {
             return -1;
@@ -214,9 +232,8 @@ EOT
      */
     protected function loadSqlFixtures(InputInterface $input, OutputInterface $output)
     {
-        $finder = new Finder();
         $tmpdir = $this->getApplication()->getKernel()->getRootDir() . '/cache/propel';
-        $datas  = $finder->name('*.sql')->in($this->absoluteFixturesPath);
+        $datas  = $this->getFixtureFiles('sql');
 
         $this->prepareCache($tmpdir);
 
@@ -289,5 +306,46 @@ EOT
         }
 
         return true;
+    }
+
+    /**
+     * Returns the fixtures files to load.
+     *
+     * @param string $type  The extension of the files.
+     * @param string $in    The directory in which we search the files. If null,
+     *                      we'll use the absoluteFixturesPath property.
+     *
+     * @return \Iterator An iterator through the files.
+     */
+    protected function getFixtureFiles($type = 'sql', $in = null)
+    {
+        $finder = new Finder();
+        $finder->sortByName()->name('*.' . $type);
+
+        $files = $finder->in(null !== $in ? $in : $this->absoluteFixturesPath);
+
+        if (null === $this->bundle) {
+            return $files;
+        }
+
+        $finalFixtureFiles = array();
+
+        foreach ($files as $file) {
+            $fixtureFilePath = str_replace($this->getFixturesPath($this->bundle) . DIRECTORY_SEPARATOR, '', $file->getRealPath());
+            $logicalName = sprintf('@%s/Resources/fixtures/%s', $this->bundle->getName(), $fixtureFilePath);
+            $finalFixtureFiles[] = new \SplFileInfo($this->getFileLocator()->locate($logicalName));
+        }
+
+        return new \ArrayIterator($finalFixtureFiles);
+    }
+
+    /**
+     * Returns the path the command will look into to find fixture files
+     *
+     * @return String
+     */
+    protected function getFixturesPath(BundleInterface $bundle)
+    {
+        return $bundle->getPath().DIRECTORY_SEPARATOR.'Resources'.DIRECTORY_SEPARATOR.'fixtures';
     }
 }

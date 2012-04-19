@@ -10,48 +10,46 @@
 
 namespace Propel\PropelBundle\Tests\DataFixtures\Dumper;
 
-use Propel\PropelBundle\Tests\TestCase;
+use Propel\PropelBundle\Tests\DataFixtures\TestCase;
 use Propel\PropelBundle\DataFixtures\Dumper\YamlDataDumper;
 
 /**
  * @author William Durand <william.durand1@gmail.com>
+ * @author Toni Uebernickel <tuebernickel@gmail.com>
  */
 class YamlDataDumperTest extends TestCase
 {
-    public function testTransformArrayToData()
+    public function testYamlDump()
     {
-        $expected = <<<YML
-\Foo\Bar:
-    fb1:
-        Id: 10
-        Title: Hello
-    fb2:
-        Id: 20
-        Title: World
+        $author = new \Propel\PropelBundle\Tests\Fixtures\DataFixtures\Loader\BookAuthor();
+        $author->setName('A famous one')->save($this->con);
 
-YML;
+        $book = new \Propel\PropelBundle\Tests\Fixtures\DataFixtures\Loader\Book();
+        $book
+            ->setName('An important one')
+            ->setAuthorId(1)
+            ->save($this->con)
+        ;
 
-        $array = array(
-            '\Foo\Bar' => array(
-                'fb1' => array('Id' => 10, 'Title' => 'Hello'),
-                'fb2' => array('Id' => 20, 'Title' => 'World')
-            )
-        );
+        $filename = $this->getTempFile();
 
-        $loader = new TestableYamlDataDumper();
-        $result = $loader->transformArrayToData($array);
-        $this->assertSame($expected, $result);
-    }
-}
+        $loader = new YamlDataDumper(__DIR__.'/../../Fixtures/DataFixtures/Loader');
+        $loader->dump($filename);
 
-class TestableYamlDataDumper extends YamlDataDumper
-{
-    public function __construct()
-    {
-    }
+        $expected = <<<YAML
+Propel\PropelBundle\Tests\Fixtures\DataFixtures\Loader\BookAuthor:
+    BookAuthor_1:
+        id: '1'
+        name: 'A famous one'
+Propel\PropelBundle\Tests\Fixtures\DataFixtures\Loader\Book:
+    Book_1:
+        id: '1'
+        name: 'An important one'
+        author_id: BookAuthor_1
 
-    public function transformArrayToData($array)
-    {
-        return parent::transformArrayToData($array);
+YAML;
+
+        $result = file_get_contents($filename);
+        $this->assertEquals($expected, $result);
     }
 }
